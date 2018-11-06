@@ -1,5 +1,8 @@
 #include <inttypes.h>
+#include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #include "mdblib.h"
 
@@ -7,7 +10,102 @@
 typedef struct _mdbhandle{
 	int proc;
 	mdbstate state;
+	int opipe;
+	int ipipe;
+	char *buffer;
 };
+
+
+/*	process management	*/
+
+mdbhandle *mdb_init()
+{
+	mdbhandle *handle = NULL;
+	int pid = -1;
+
+	// setup pipes
+	// FORK
+
+	if (pid == 0) {	// child process
+		(void)0;	// exec on mdb process
+	} else if (pid > 0) {	// parent process
+		handle = malloc(sizeof(mdbhandle));
+		handle->proc = pid;
+		handle->state = mdb_stopped;
+		handle->opipe = 0;
+		handle->ipipe = 0;
+		handle->buffer = NULL;
+	}
+
+	return handle;
+}
+
+void mdb_close(mdbhandle *handle)
+{
+	// however you force a process to exit
+	// wait on process
+	handle->state = mdb_dead;
+	close(handle->opipe);
+	close(handle->ipipe);
+	free(handle->buffer);
+	free(handle);
+}
+
+
+/*	basic I/O	*/
+
+void mdb_put(mdbhandle *handle, const char *format, ...)
+{
+	va_list arg;
+	va_start(arg, format);
+	mdb_vput(handle, format, arg);
+	va_end(arg);
+}
+
+void mdb_vput(mdbhandle *handle, const char *format, va_list arg)
+{
+	va_list arg2;
+	va_copy(arg2, arg);
+	size_t size = vsnprintf(NULL, 0, format, arg2) + 1;
+	va_end(arg2);
+
+	free(handle->buffer);
+	handle->buffer = malloc(size);
+	vsnprintf(handle->buffer, size, format, arg);
+	write(handle->opipe, handle->buffer, size);
+}
+
+char *mdb_get(mdbhandle *handle)
+{
+	const size_t basesize = 100;
+	size_t size = 0;
+	size_t offset = 0;
+	size_t bread = 0;
+	free(handle->buffer);
+	handle->buffer = NULL;
+
+	do {
+		offset += bread;
+		if ((size-offset) < basesize) {
+			size += basesize;
+			handle->buffer = realloc(handle->buffer, size);
+		}
+
+		bread = read(handle->ipipe, handle->buffer, (size-offset));
+	} while (bread > 0);
+
+	return handle->buffer;
+}
+
+char *mdb_trans(mdbhandle *handle, const char *format, ...)
+{
+	va_list arg;
+	va_start(arg, format);
+	mdb_vput(handle, format, arg);
+	va_end(arg);
+
+	return mdb_get(handle);
+}
 
 
 /*	mdb commands - implemented using mdb_put(mdbhandle handle) and mdb_get(mdbhandle *handle)	*/
@@ -312,27 +410,27 @@ void mdb_halt(mdbhandle *handle)
 
 void mdb_next(mdbhandle *handle)
 {
-	mdb_put("Next");
+	mdb_put(handle, "Next");
 }
 
 void mdb_run(mdbhandle *handle)
 {
-	mdb_put("Run");
+	mdb_put(handle, "Run");
 }
 
 void mdb_step(mdbhandle *handle)
 {
-	mdb_put("Step");
+	mdb_put(handle, "Step");
 }
 
 void mdb_stepi(mdbhandle *handle)
 {
-	mdb_put("Stepi %u");
+	mdb_put(handle, "Stepi %u");
 }
 
 void mdb_stepi_cnt(mdbhandle *handle, unsigned int count)
 {
-	mdb_put("Stepi %u", count);
+	mdb_put(handle, "Stepi %u", count);
 }
 
 // stack

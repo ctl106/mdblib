@@ -24,9 +24,10 @@ mdbhandle *mdb_init();		// launches an interactive mdb process
 void mdb_close(mdbhandle *handle);	// makes sure the process closed
 
 /*	basic I/O	*/
-void mdb_put(mdbhandle *handle, ...);
+void mdb_put(mdbhandle *handle, const char *format, ...);
+void mdb_vput(mdbhandle *handle, const char *format, va_list arg);
 char *mdb_get(mdbhandle *handle);		// run after a put to collect output
-char *mdb_trans(mdbhandle *handle, ...);	// simple combo of the two
+char *mdb_trans(mdbhandle *handle, const char *format, ...);	// simple combo of the two
 
 /*	utilities	*/
 int mdb_bn_line(mdbhandle *handle, char *filename, size_t linenumber);
