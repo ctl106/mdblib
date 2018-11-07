@@ -91,7 +91,7 @@ char *mdb_get(mdbhandle *handle)
 			handle->buffer = realloc(handle->buffer, size);
 		}
 
-		bread = read(handle->ipipe, handle->buffer, (size-offset));
+		bread = read(handle->ipipe, handle->buffer+offset, (size-offset));
 	} while (bread > 0);
 
 	return handle->buffer;
