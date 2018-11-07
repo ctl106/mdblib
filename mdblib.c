@@ -1,19 +1,62 @@
+#include <errno.h>
 #include <inttypes.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "mdblib.h"
 
 
-typedef struct _mdbhandle{
-	int proc;
+#ifndef MDB_EXEC
+#define MDB_EXEC "mdb"
+#endif // MDB_EXEC
+
+
+struct _mdbhandle{
+	pid_t pid;
 	mdbstate state;
-	int opipe;
 	int ipipe;
+	int opipe;
 	char *buffer;
 };
+
+
+/*	utility functions	*/
+void child_fork(int ipipe[2], int opipe[2])
+{
+	while (dup2(ipipe[0], STDIN_FILENO) < 0 && (errno == EINTR));
+	while (dup2(opipe[1], STDOUT_FILENO) < 0 && (errno == EINTR));
+	while (dup2(opipe[1], STDERR_FILENO) < 0 && (errno == EINTR));
+	close(ipipe[0]);
+	close(ipipe[1]);
+	close(opipe[0]);
+	close(opipe[1]);
+	execlp(MDB_EXEC, MDB_EXEC, (char *)NULL);
+}
+
+void failed_fork(int ipipe[2], int opipe[2])
+{
+	close(ipipe[0]);
+	close(ipipe[1]);
+	close(opipe[0]);
+	close(opipe[1]);
+}
+
+mdbhandle *parent_fork(pid_t pid, int ipipe[2], int opipe[2])
+{
+	close(ipipe[0]);
+	close(opipe[1]);
+
+	mdbhandle *handle = malloc(sizeof(mdbhandle));
+	handle->pid = pid;
+	handle->state = mdb_stopped;
+	handle->ipipe = ipipe[1];
+	handle->opipe = opipe[0];
+	handle->buffer = NULL;
+	return handle;
+}
 
 
 /*	process management	*/
@@ -21,29 +64,28 @@ typedef struct _mdbhandle{
 mdbhandle *mdb_init()
 {
 	mdbhandle *handle = NULL;
-	int pid = -1;
 
 	// setup pipes
-	// FORK
+	int ipipe[2];
+	int opipe[2];
+	pipe(ipipe);
+	pipe(opipe);
 
-	if (pid == 0) {	// child process
-		(void)0;	// exec on mdb process
-	} else if (pid > 0) {	// parent process
-		handle = malloc(sizeof(mdbhandle));
-		handle->proc = pid;
-		handle->state = mdb_stopped;
-		handle->opipe = 0;
-		handle->ipipe = 0;
-		handle->buffer = NULL;
-	}
+	pid_t pid = fork();
+
+	if (pid == 0)
+		child_fork(ipipe, opipe);
+	else if (pid > 0)
+		handle = parent_fork(pid, ipipe, opipe);
+	else
+		failed_fork(ipipe, opipe);
 
 	return handle;
 }
 
 void mdb_close(mdbhandle *handle)
 {
-	// however you force a process to exit
-	// wait on process
+	waitpid(handle->pid, NULL, 0);
 	handle->state = mdb_dead;
 	close(handle->opipe);
 	close(handle->ipipe);
@@ -72,7 +114,7 @@ void mdb_vput(mdbhandle *handle, const char *format, va_list arg)
 	free(handle->buffer);
 	handle->buffer = malloc(size);
 	vsnprintf(handle->buffer, size, format, arg);
-	write(handle->opipe, handle->buffer, size);
+	write(handle->ipipe, handle->buffer, size);
 }
 
 char *mdb_get(mdbhandle *handle)
@@ -91,7 +133,7 @@ char *mdb_get(mdbhandle *handle)
 			handle->buffer = realloc(handle->buffer, size);
 		}
 
-		bread = read(handle->ipipe, handle->buffer+offset, (size-offset));
+		bread = read(handle->opipe, handle->buffer+offset, size-offset);
 	} while (bread > 0);
 
 	return handle->buffer;
@@ -188,7 +230,7 @@ long mdb_print_var(mdbhandle *handle, char f, size_t value, char *variable)
 mdbptr mdb_print_var_addr(mdbhandle *handle, char *variable)
 {
 	char *result = mdb_trans(handle, "print /a %s", variable);
-	mdbptr addr;
+	mdbptr addr = 0;
 	sscanf(result, MDB_SCNxPTR, addr);
 	return addr;
 }
@@ -433,14 +475,16 @@ void mdb_stepi_cnt(mdbhandle *handle, unsigned int count)
 	mdb_put(handle, "Stepi %u", count);
 }
 
+
 // stack
+
 char *mdb_backtrace(mdbhandle *handle, int full, int n)
 {
 	char *result = NULL;
 	if (full)
-		result = mdb_trans("backtrace full %d", n);
+		result = mdb_trans(handle, "backtrace full %d", n);
 	else
-		result = mdb_trans("backtrace %d", n);
+		result = mdb_trans(handle, "backtrace %d", n);
 	return result;
 }
 
