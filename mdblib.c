@@ -15,7 +15,16 @@
 #endif // MDB_EXEC
 
 
-struct _mdbhandle{
+struct _mdbbp {
+	int number;
+	char enabled;
+	mdbptr address;
+	char *filename;
+	size_t line;
+};
+
+
+struct _mdbhandle {
 	pid_t pid;
 	mdbstate state;
 	int ipipe;
@@ -151,7 +160,64 @@ char *mdb_trans(mdbhandle *handle, const char *format, ...)
 }
 
 
-/*	mdb commands - implemented using mdb_put(mdbhandle handle) and mdb_get(mdbhandle *handle)	*/
+/*	utilities	*/
+int mdb_bn_line(mdbhandle *handle, char *filename, size_t linenumber)
+{
+	int number = -1;
+	mdbbp **breakpoints = mdb_info_break(handle);
+
+	size_t i;
+	int loop;
+	for (i = 0, loop = 1; loop; i++) {
+		if (breakpoints[i] == NULL)
+			loop = 0;
+		else if (	// need something that handles file paths better
+				strcmp(breakpoints[i]->filename, filename) == 0 &&
+				breakpoints[i]->line == linenumber
+				) {
+			number = breakpoints[i]->number;
+			loop = 0;
+		}
+	}
+
+	return number;
+}
+
+int mdb_bn_addr(mdbhandle *handle, mdbptr address)
+{
+	int number = -1;
+	mdbbp **breakpoints = mdb_info_break(handle);
+
+	size_t i;
+	int loop;
+	for (i = 0, loop = 1; loop; i++) {
+		if (breakpoints[i] == NULL)
+			loop = 0;
+		else if (breakpoints[i]->address == address) {
+			number = breakpoints[i]->number;
+			loop = 0;
+		}
+	}
+
+	return number;
+}
+
+int mdb_bn_func(mdbhandle *handle, char *function)
+{
+	// tricky... it doesn't appear "info break" gives function names
+	// it's kinda dumb that the commands for setting breakpoints
+	// doesn't print out the breakpoint number.
+	return -1;
+}
+
+void mdb_close_breakpoint(mdbbp *breakpoint)
+{
+	free(breakpoint->filename);
+	free(breakpoint);
+}
+
+
+/*	mdb commands	*/
 // breakpoints
 
 int mdb_break_line(mdbhandle *handle, char *filename, size_t linenumber, size_t passCount)
@@ -357,14 +423,26 @@ void mdb_cd(mdbhandle *handle, char *DIR)
 	mdb_put(handle, "cd %s", DIR);
 }
 
-char *mdb_info_break(mdbhandle *handle)
+mdbbp **mdb_info_break(mdbhandle *handle)
 {
-	return mdb_trans(handle, "info breakpoints");
+	mdb_trans(handle, "info breakpoints");
+	/*
+	return parse_breakpoints(handle->buffer);
+	*/
 }
 
-char *mdb_info_break_n(mdbhandle *handle, size_t n)
+mdbbp *mdb_info_break_n(mdbhandle *handle, size_t n)
 {
-	return mdb_trans(handle, "info breakpoints %u", n);
+	mdb_trans(handle, "info breakpoints %u", n);
+	/*
+	mdbbp **result = parse_breakpoints(handle->buffer);
+
+	size_t i;
+	for (i = 1; result[i] != NULL; i++)		// this should never be true, but
+		mdb_close_breakpoint(result[i]);	// to be safe and avoid leaks
+
+	return result[0];
+	*/
 }
 
 char *mdb_list(mdbhandle *handle)

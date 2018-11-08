@@ -7,6 +7,7 @@
 #define MDB_SCNxPTR	SCNxPTR
 #define MDB_PRIWORD	"u"
 
+typedef struct _mdbbp		mdbbp;
 typedef struct _mdbhandle	mdbhandle;
 typedef uintptr_t			mdbptr;
 typedef unsigned int		mdbword;
@@ -30,10 +31,7 @@ char *mdb_get(mdbhandle *handle);		// run after a put to collect output
 char *mdb_trans(mdbhandle *handle, const char *format, ...);	// simple combo of the two
 
 /*	utilities	*/
-int mdb_bn_line(mdbhandle *handle, char *filename, size_t linenumber);
-int mdb_bn_addr(mdbhandle *handle, mdbptr address);
-int mdb_bn_func(mdbhandle *handle, char *function);
-// mdb_search_breakpoints(mdbhandle *handle);
+void mdb_close_breakpoint(mdbbp *breakpoint);
 
 /*	mdb commands - implemented using mdb_put(mdbhandle *handle) and mdb_get(mdbhandle *handle)	*/
 // breakpoints
@@ -71,8 +69,8 @@ void mdb_stopwatch_prop(mdbhandle *handle, char *stopwatch_property);
 void mdb_wait(mdbhandle *handle);
 void mdb_wait_ms(mdbhandle *handle, unsigned int milliseconds);
 void mdb_cd(mdbhandle *handle, char *DIR);
-char *mdb_info_break(mdbhandle *handle);
-char *mdb_info_break_n(mdbhandle *handle, size_t n);
+mdbbp **mdb_info_break(mdbhandle *handle);
+mdbbp *mdb_info_break_n(mdbhandle *handle, size_t n);
 char *mdb_list(mdbhandle *handle);
 char *mdb_list_line(mdbhandle *handle, size_t linenum);
 char *mdb_list_first(mdbhandle *handle, size_t first);
