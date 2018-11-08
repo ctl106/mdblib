@@ -50,7 +50,7 @@ long mdb_print_var(mdbhandle *handle, char f, size_t value, char *variable);
 mdbptr mdb_print_var_addr(mdbhandle *handle, char *variable);
 const char *mdb_print_pin(mdbhandle *handle, char *pinName);
 void mdb_stim(mdbhandle *handle);
-void mdb_write_mem(mdbhandle *handle, char *t, size_t addr, mdbword words[]);
+void mdb_write_mem(mdbhandle *handle, char *t, size_t addr, int wordc, mdbword words[]);
 void mdb_write_pins(mdbhandle *handle, char *pinName, int pinState);
 void mdb_write_pinv(mdbhandle *handle, char *pinName, int pinVoltage);
 const char *mdb_x(mdbhandle *handle, char t, unsigned int n, char f, char u, size_t addr);

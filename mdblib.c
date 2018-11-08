@@ -3,6 +3,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -245,12 +246,19 @@ void mdb_stim(mdbhandle *handle)
 	mdb_put(handle, "stim");
 }
 
-void mdb_write_mem(mdbhandle *handle, char *t, size_t addr, mdbword words[])
+void mdb_write_mem(mdbhandle *handle, char *t, size_t addr, int wordc, mdbword wordv[])
 {
-	char *all_words;
-	/*	MAGIC	*/
+	size_t size = wordc*(sizeof(mdbword) + 1);
+	char *all_words = malloc(size);
+	memset(all_words, 0, size);
 
+	size_t i;
+	for (i = 0; i < size; i++)
+		sprintf(all_words, "%s%"MDB_PRIWORD" ", all_words, wordv[i]);
+	all_words[size-1] = '\0';
 	mdb_put(handle, "write /%c %x %s", t, addr, all_words);
+
+	free(all_words);
 }
 
 void mdb_write_pins(mdbhandle *handle, char *pinName, int pinState)
