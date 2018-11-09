@@ -68,6 +68,79 @@ mdbhandle *parent_fork(pid_t pid, int ipipe[2], int opipe[2])
 	return handle;
 }
 
+mdbbp **parse_breakpoints(char *buffer)
+{
+	// expects buffer to be the output of mdb "info break"
+	// first output line is just column lables, so ignore
+
+	// given how this function is used in this library, tokenizing in-place
+	// is perfectly acceptable, and preservation of buffer contents is unneeded
+	enum {junk, number, enabled, address, filename, line};
+
+	mdbbp **output;
+	mdbbp *breakpoint;
+	size_t o_size = 0;
+	size_t f_size = 0;
+
+	char *tok_buff = buffer;
+	char *token;
+	int type = junk;
+	do {
+		token = strtok(tok_buff, "\n\t ");
+
+		if (strlen(token)) {
+			switch (type) {
+				case number:
+					o_size++;	// not particularly efficient; optimize later
+					output = realloc(output, o_size);
+					output[o_size-1] = NULL;
+
+					breakpoint = malloc(sizeof(breakpoint));
+					breakpoint->number = atoi(token);
+					type = enabled;
+					break;
+				case enabled:
+					breakpoint->enabled = *token;
+					type = address;
+					break;
+				case address:
+					breakpoint->address = (mdbptr)atoi(token);
+					type = filename;
+					break;
+				case filename:
+					f_size = strlen(token);
+					breakpoint->filename = malloc(f_size);
+					strcpy(breakpoint->filename, token);
+					type = line;
+					break;
+				case line:
+					breakpoint->line = (size_t)atoi(token);
+					type = number;
+
+					output[o_size-1] = breakpoint;
+					break;
+
+				case junk:
+				default:
+					if (strcmp(token, "what") == 0)
+						type = number;
+			}
+		}
+
+		if (tok_buff)
+			tok_buff = NULL;
+	} while (token);
+
+	if (output[o_size-1] == NULL)	// throw way incomplete breakpoint
+		mdb_close_breakpoint(breakpoint);
+	else {	// returned array MUST be null terminated
+		output = realloc(output, o_size + 1);
+		output[o_size] = NULL;
+	}
+
+	return output;
+}
+
 
 /*	process management	*/
 
@@ -207,6 +280,7 @@ int mdb_bn_func(mdbhandle *handle, char *function)
 	// tricky... it doesn't appear "info break" gives function names
 	// it's kinda dumb that the commands for setting breakpoints
 	// doesn't print out the breakpoint number.
+#warning mdb_bn_func() does not return a useful value in current implementation
 	return -1;
 }
 
@@ -426,15 +500,12 @@ void mdb_cd(mdbhandle *handle, char *DIR)
 mdbbp **mdb_info_break(mdbhandle *handle)
 {
 	mdb_trans(handle, "info breakpoints");
-	/*
 	return parse_breakpoints(handle->buffer);
-	*/
 }
 
 mdbbp *mdb_info_break_n(mdbhandle *handle, size_t n)
 {
 	mdb_trans(handle, "info breakpoints %u", n);
-	/*
 	mdbbp **result = parse_breakpoints(handle->buffer);
 
 	size_t i;
@@ -442,7 +513,6 @@ mdbbp *mdb_info_break_n(mdbhandle *handle, size_t n)
 		mdb_close_breakpoint(result[i]);	// to be safe and avoid leaks
 
 	return result[0];
-	*/
 }
 
 char *mdb_list(mdbhandle *handle)
