@@ -1,9 +1,11 @@
 #include <errno.h>
 #include <inttypes.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -141,6 +143,15 @@ mdbbp **parse_breakpoints(char *buffer)
 	return output;
 }
 
+unsigned long long time_in_ms()
+{
+	// based off of the formula for calculating time in ms here:
+	// https://stackoverflow.com/questions/16764276/measuring-time-in-millisecond-precision/16764286#16764286
+	struct timeval tv;
+	gettimeofday(&tv, NULL);
+	return (unsigned long long)((tv.tv_sec * 1000) + (tv.tv_usec / 1000));
+}
+
 
 /*	process management	*/
 
@@ -168,7 +179,19 @@ mdbhandle *mdb_init()
 
 void mdb_close(mdbhandle *handle)
 {
-	waitpid(handle->pid, NULL, 0);
+	int status = 0;
+	unsigned long long start = time_in_ms();
+	unsigned long long current;
+	for (	// loop util timeout is exceeded or process exits
+			current = start;
+			((current - start) > MDB_TIMEOUT) && (status <= 0);
+			current = time_in_ms(),
+			status = waitpid(handle->pid, NULL, WNOHANG)
+		)
+
+	if (status <= 0)	// child process hasn't exited, so kill
+		kill(handle->pid, SIGKILL);
+
 	handle->state = mdb_dead;
 	close(handle->opipe);
 	close(handle->ipipe);
@@ -251,6 +274,8 @@ int mdb_bn_line(mdbhandle *handle, char *filename, size_t linenumber)
 			number = breakpoints[i]->number;
 			loop = 0;
 		}
+
+		mdb_close_breakpoint(breakpoints[i]);
 	}
 
 	return number;
@@ -270,6 +295,8 @@ int mdb_bn_addr(mdbhandle *handle, mdbptr address)
 			number = breakpoints[i]->number;
 			loop = 0;
 		}
+
+		mdb_close_breakpoint(breakpoints[i]);
 	}
 
 	return number;

@@ -2,6 +2,10 @@
 #define MDBLIB_H_INCLUDED
 
 
+#ifndef MDB_TIMEOUT
+#define MDB_TIMEOUT 100
+#endif // MDB_TIMEOUT
+
 #define MDB_PRIXPTR	PRIXPTR
 #define MDB_PRIxPTR	PRIxPTR
 #define MDB_SCNxPTR	SCNxPTR
