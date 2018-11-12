@@ -414,7 +414,7 @@ void mdb_write_pinv(mdbhandle *handle, char *pinName, int pinVoltage)
 	mdb_put(handle, "write %s high", pinName, pinVoltage);
 }
 
-const char *mdb_x(mdbhandle *handle, char t, unsigned int n, char f, char u, size_t addr)
+const char *mdb_x(mdbhandle *handle, char t, unsigned int n, char f, char u, mdbptr addr)
 {
 	mdb_put(handle, "x /%c%u%c%c %x", t, n, f, u, addr);
 	return mdb_get(handle);

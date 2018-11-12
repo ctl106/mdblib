@@ -40,7 +40,7 @@ int mdb_break_addr(mdbhandle *handle, mdbptr address, unsigned int passCount);
 int mdb_break_func(mdbhandle *handle, char *function, unsigned int passCount);
 void mdb_delete(mdbhandle *handle, int breakpoint);
 void mdb_delete_all(mdbhandle *handle);
-int mdb_watch(mdbhandle *handle, size_t address, char *breakonType, unsigned int passCount);
+int mdb_watch(mdbhandle *handle, mdbptr address, char *breakonType, unsigned int passCount);
 int mdb_watch_val(mdbhandle *handle, mdbptr address, char *breakonType, unsigned char value, size_t passCount);
 
 // data
@@ -51,7 +51,7 @@ void mdb_stim(mdbhandle *handle);
 void mdb_write_mem(mdbhandle *handle, char *t, size_t addr, int wordc, mdbword words[]);
 void mdb_write_pins(mdbhandle *handle, char *pinName, int pinState);
 void mdb_write_pinv(mdbhandle *handle, char *pinName, int pinVoltage);
-const char *mdb_x(mdbhandle *handle, char t, unsigned int n, char f, char u, size_t addr);
+const char *mdb_x(mdbhandle *handle, char t, unsigned int n, char f, char u, mdbptr addr);
 
 // deviceandtool
 void mdb_device(mdbhandle *handle, char *devicename);
