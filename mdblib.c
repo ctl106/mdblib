@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -60,6 +61,9 @@ mdbhandle *parent_fork(pid_t pid, int ipipe[2], int opipe[2])
 {
 	close(ipipe[0]);
 	close(opipe[1]);
+
+	//int flags = fcntl(opipe[0], F_GETFL, 0);
+	//fcntl(opipe[0], F_SETFL, flags | O_NONBLOCK);
 
 	mdbhandle *handle = malloc(sizeof(mdbhandle));
 	handle->pid = pid;
@@ -231,16 +235,17 @@ char *mdb_get(mdbhandle *handle)
 	size_t bread = 0;
 	free(handle->buffer);
 	handle->buffer = NULL;
-
+	printf("\t\tmdb_get() beginning read loop\n");	// REMOVE_ME
 	do {
 		offset += bread;
 		if ((size-offset) < basesize) {
 			size += basesize;
 			handle->buffer = realloc(handle->buffer, size);
 		}
-
+		printf("\t\tmdb_get() attempting read...\n");	// REMOVE_ME
 		bread = read(handle->opipe, handle->buffer+offset, size-offset);
-	} while (bread > 0);
+		printf("\t\tmdb_get() bread:\t%u\n", bread);	// REMOVE_ME
+	} while ((bread > 0) && (bread != -1));
 
 	return handle->buffer;
 }
@@ -398,8 +403,12 @@ long mdb_print_var(mdbhandle *handle, char f, size_t value, char *variable)
 mdbptr mdb_print_var_addr(mdbhandle *handle, const char *variable)
 {
 	char *result = mdb_trans(handle, "print /a %s", variable);
+	printf("\t\tmdb_print_var_addr() result:\t%s\n", result);	// REMOVE_ME
 	mdbptr addr = 0;
-	sscanf(result, MDB_SCNxPTR, addr);
+	sscanf(result, "The Address of %s: 0x"MDB_SCNxPTR, NULL, addr);
+	printf("\t\tpointer conversion:\t%"MDB_PRIXPTR"\n", addr);	// REMOVE ME
+	if (addr == 0)
+		addr = NULL;
 	return addr;
 }
 
