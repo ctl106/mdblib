@@ -2,6 +2,9 @@
 #define MDBLIB_H_INCLUDED
 
 
+#include <stdarg.h>
+
+
 #ifndef MDB_TIMEOUT
 #define MDB_TIMEOUT 100
 #endif // MDB_TIMEOUT
@@ -49,10 +52,10 @@ int mdb_watch_val(mdbhandle *handle, mdbptr address, char *breakonType, unsigned
 
 // data
 long mdb_print_var(mdbhandle *handle, char f, size_t value, char *variable);
-mdbptr mdb_print_var_addr(mdbhandle *handle, char *variable);
+mdbptr mdb_print_var_addr(mdbhandle *handle, const char *variable);
 const char *mdb_print_pin(mdbhandle *handle, char *pinName);
 void mdb_stim(mdbhandle *handle);
-void mdb_write_mem(mdbhandle *handle, char *t, size_t addr, int wordc, mdbword words[]);
+void mdb_write_mem(mdbhandle *handle, char t, size_t addr, int wordc, mdbword words[]);
 void mdb_write_pins(mdbhandle *handle, char *pinName, int pinState);
 void mdb_write_pinv(mdbhandle *handle, char *pinName, int pinVoltage);
 const char *mdb_x(mdbhandle *handle, char t, unsigned int n, char f, char u, mdbptr addr);

@@ -395,7 +395,7 @@ long mdb_print_var(mdbhandle *handle, char f, size_t value, char *variable)
 	return strtol(result, NULL, 0);
 }
 
-mdbptr mdb_print_var_addr(mdbhandle *handle, char *variable)
+mdbptr mdb_print_var_addr(mdbhandle *handle, const char *variable)
 {
 	char *result = mdb_trans(handle, "print /a %s", variable);
 	mdbptr addr = 0;
@@ -413,7 +413,7 @@ void mdb_stim(mdbhandle *handle)
 	mdb_put(handle, "stim");
 }
 
-void mdb_write_mem(mdbhandle *handle, char *t, size_t addr, int wordc, mdbword wordv[])
+void mdb_write_mem(mdbhandle *handle, char t, size_t addr, int wordc, mdbword wordv[])
 {
 	size_t size = wordc*(sizeof(mdbword) + 1);
 	char *all_words = malloc(size);
