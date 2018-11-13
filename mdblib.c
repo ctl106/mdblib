@@ -10,12 +10,18 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "pdip.h"
+
 #include "mdblib.h"
 
 
 #ifndef MDB_EXEC
 #define MDB_EXEC "mdb"
 #endif // MDB_EXEC
+
+#ifndef MDB_PROMPT_REG
+#define MDB_PROMPT_REG "^>"
+#endif // MDB_PROMPT_REG
 
 
 struct _mdbbp {
@@ -28,52 +34,15 @@ struct _mdbbp {
 
 
 struct _mdbhandle {
-	pid_t pid;
+	pdip_cfg_t cfg;
+	pdip_t pdip;
+	int	pid;
 	mdbstate state;
-	int ipipe;
-	int opipe;
 	char *buffer;
 };
 
 
 /*	utility functions	*/
-void child_fork(int ipipe[2], int opipe[2])
-{
-	while (dup2(ipipe[0], STDIN_FILENO) < 0 && (errno == EINTR));
-	while (dup2(opipe[1], STDOUT_FILENO) < 0 && (errno == EINTR));
-	while (dup2(opipe[1], STDERR_FILENO) < 0 && (errno == EINTR));
-	close(ipipe[0]);
-	close(ipipe[1]);
-	close(opipe[0]);
-	close(opipe[1]);
-	execlp(MDB_EXEC, MDB_EXEC, (char *)NULL);
-}
-
-void failed_fork(int ipipe[2], int opipe[2])
-{
-	close(ipipe[0]);
-	close(ipipe[1]);
-	close(opipe[0]);
-	close(opipe[1]);
-}
-
-mdbhandle *parent_fork(pid_t pid, int ipipe[2], int opipe[2])
-{
-	close(ipipe[0]);
-	close(opipe[1]);
-
-	//int flags = fcntl(opipe[0], F_GETFL, 0);
-	//fcntl(opipe[0], F_SETFL, flags | O_NONBLOCK);
-
-	mdbhandle *handle = malloc(sizeof(mdbhandle));
-	handle->pid = pid;
-	handle->state = mdb_stopped;
-	handle->ipipe = ipipe[1];
-	handle->opipe = opipe[0];
-	handle->buffer = NULL;
-	return handle;
-}
-
 mdbbp **parse_breakpoints(char *buffer)
 {
 	// expects buffer to be the output of mdb "info break"
@@ -161,22 +130,30 @@ unsigned long long time_in_ms()
 
 mdbhandle *mdb_init()
 {
-	mdbhandle *handle = NULL;
+	mdbhandle *handle = malloc(sizeof(mdbhandle));
 
-	// setup pipes
-	int ipipe[2];
-	int opipe[2];
-	pipe(ipipe);
-	pipe(opipe);
+	// set up pdip
+	pdip_configure(1, 0);
+	pdip_cfg_init(&(handle->cfg));
+	handle->cfg.flags |= PDIP_FLAG_ERR_REDIRECT;
+	handle->cfg.debug_level = 0;
+	handle->pdip = pdip_new(&(handle->cfg));
 
-	pid_t pid = fork();
+	handle->state = mdb_stopped;
+	handle->buffer = NULL;
 
-	if (pid == 0)
-		child_fork(ipipe, opipe);
-	else if (pid > 0)
-		handle = parent_fork(pid, ipipe, opipe);
-	else
-		failed_fork(ipipe, opipe);
+	// technically using strlen() like this is hackish, but it should work
+	// cmnd is a NULL terminated array.
+	char *cmnd[] = {MDB_EXEC, (char *)0};
+	handle->pid = pdip_exec(handle->pdip, 1, cmnd);
+printf("PID:\t%d\n", handle->pid);	// REMOVE_ME
+
+	if (handle->pid < 1) {
+		mdb_close(handle);
+		handle = NULL;
+	}
+
+	mdb_get(handle);	// eat initial prompt
 
 	return handle;
 }
@@ -184,21 +161,10 @@ mdbhandle *mdb_init()
 void mdb_close(mdbhandle *handle)
 {
 	int status = 0;
-	unsigned long long start = time_in_ms();
-	unsigned long long current;
-	for (	// loop util timeout is exceeded or process exits
-			current = start;
-			((current - start) > MDB_TIMEOUT) && (status <= 0);
-			current = time_in_ms(),
-			status = waitpid(handle->pid, NULL, WNOHANG)
-		)
-
-	if (status <= 0)	// child process hasn't exited, so kill
-		kill(handle->pid, SIGKILL);
+	pdip_status(handle->pdip, &status, 1);	// let the process exit gracefully
+	pdip_delete(handle->pdip, NULL);
 
 	handle->state = mdb_dead;
-	close(handle->opipe);
-	close(handle->ipipe);
 	free(handle->buffer);
 	free(handle);
 }
@@ -221,31 +187,18 @@ void mdb_vput(mdbhandle *handle, const char *format, va_list arg)
 	size_t size = vsnprintf(NULL, 0, format, arg2) + 1;
 	va_end(arg2);
 
-	free(handle->buffer);
 	handle->buffer = malloc(size);
 	vsnprintf(handle->buffer, size, format, arg);
-	write(handle->ipipe, handle->buffer, size);
+
+printf("pdip_send():\t\"%s\"\n", handle->buffer);	// REMOVE_ME
+	pdip_send(handle->pdip, handle->buffer);
+	free(handle->buffer);
 }
 
 char *mdb_get(mdbhandle *handle)
 {
-	const size_t basesize = 100;
-	size_t size = 0;
-	size_t offset = 0;
-	size_t bread = 0;
-	free(handle->buffer);
-	handle->buffer = NULL;
-	printf("\t\tmdb_get() beginning read loop\n");	// REMOVE_ME
-	do {
-		offset += bread;
-		if ((size-offset) < basesize) {
-			size += basesize;
-			handle->buffer = realloc(handle->buffer, size);
-		}
-		printf("\t\tmdb_get() attempting read...\n");	// REMOVE_ME
-		bread = read(handle->opipe, handle->buffer+offset, size-offset);
-		printf("\t\tmdb_get() bread:\t%u\n", bread);	// REMOVE_ME
-	} while ((bread > 0) && (bread != -1));
+	pdip_recv(handle->pdip, MDB_PROMPT_REG, handle->buffer, NULL, NULL, NULL);
+printf("pdip_recv():\t\"%s\"\n", handle->buffer);	// REMOVE_ME
 
 	return handle->buffer;
 }
@@ -369,9 +322,9 @@ void mdb_delete_all(mdbhandle *handle)
 int mdb_watch(mdbhandle *handle, mdbptr address, char *breakonType, unsigned int passCount)
 {
 	if (passCount)
-		mdb_put(handle, "watch %"MDB_PRIXPTR" %s %u", address, breakonType, passCount);
+		mdb_trans(handle, "watch %"MDB_PRIXPTR" %s %u", address, breakonType, passCount);
 	else
-		mdb_put(handle, "watch %"MDB_PRIXPTR" %s", address, breakonType);
+		mdb_trans(handle, "watch %"MDB_PRIXPTR" %s", address, breakonType);
 
 	return mdb_bn_addr(handle, address);
 }
@@ -407,8 +360,6 @@ mdbptr mdb_print_var_addr(mdbhandle *handle, const char *variable)
 	mdbptr addr = 0;
 	sscanf(result, "The Address of %s: 0x"MDB_SCNxPTR, NULL, addr);
 	printf("\t\tpointer conversion:\t%"MDB_PRIXPTR"\n", addr);	// REMOVE ME
-	if (addr == 0)
-		addr = NULL;
 	return addr;
 }
 
@@ -461,15 +412,15 @@ const char *mdb_x(mdbhandle *handle, char t, unsigned int n, char f, char u, mdb
 
 void mdb_device(mdbhandle *handle, char *devicename)
 {
-	mdb_put(handle, "Device %s", devicename);
+	mdb_trans(handle, "Device %s\n", devicename);
 }
 
 void mdb_hwtool(mdbhandle *handle, char *toolType, int p, size_t index)
 {
 	if (p)
-		mdb_put(handle, "Hwtool %s -p %u", toolType, index);
+		mdb_trans(handle, "Hwtool %s -p %u", toolType, index);
 	else
-		mdb_put(handle, "Hwtool %s %u", toolType, index);
+		mdb_trans(handle, "Hwtool %s %u", toolType, index);
 }
 
 char *mdb_hwtool_list(mdbhandle *handle)

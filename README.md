@@ -2,6 +2,10 @@
 ###### A C library for interfacing with the Microchip Debugger (mdb)
 ------
 
+Prerequisits:
+
+1. PDIP - Programmed Dialogue with Interactive Programs - http://pdip.sourceforge.net/
+
 More information will be added as development progresses.
 
 Microchip's command line debugging tool, (mdb.sh on Linux) is needed before this library can be used. It comes along with MPLAB X IDE, so installing that software is the recommended route to take before using this library.
