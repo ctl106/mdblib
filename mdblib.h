@@ -49,6 +49,8 @@ void mdb_delete(mdbhandle *handle, int breakpoint);
 void mdb_delete_all(mdbhandle *handle);
 int mdb_watch(mdbhandle *handle, mdbptr address, char *breakonType, unsigned int passCount);
 int mdb_watch_val(mdbhandle *handle, mdbptr address, char *breakonType, unsigned char value, size_t passCount);
+int mdb_watch_name(mdbhandle *handle, const char *name, char *breakonType, unsigned int passCount);
+int mdb_watch_name_val(mdbhandle *handle, const char *name, char *breakonType, unsigned char value, size_t passCount);
 
 // data
 long mdb_print_var(mdbhandle *handle, char f, size_t value, char *variable);

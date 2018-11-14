@@ -144,7 +144,9 @@ mdbhandle *mdb_init()
 
 	// technically using strlen() like this is hackish, but it should work
 	// cmnd is a NULL terminated array.
-	char *cmnd[] = {MDB_EXEC, (char *)0};
+	char *cmnd[2];
+	cmnd[0] = MDB_EXEC;
+	cmnd[1] = (char *)0;
 	handle->pid = pdip_exec(handle->pdip, 1, cmnd);
 printf("PID:\t%d\n", handle->pid);	// REMOVE_ME
 
@@ -186,20 +188,26 @@ void mdb_vput(mdbhandle *handle, const char *format, va_list arg)
 	va_copy(arg2, arg);
 	size_t size = vsnprintf(NULL, 0, format, arg2) + 1;
 	va_end(arg2);
-
-	handle->buffer = malloc(size);
-	vsnprintf(handle->buffer, size, format, arg);
-
-printf("pdip_send():\t\"%s\"\n", handle->buffer);	// REMOVE_ME
-	pdip_send(handle->pdip, handle->buffer);
-	free(handle->buffer);
+	char *buffer = malloc(size);
+	vsnprintf(buffer, size, format, arg);
+	pdip_send(handle->pdip, buffer);
+	free(buffer);
 }
 
 char *mdb_get(mdbhandle *handle)
 {
-	pdip_recv(handle->pdip, MDB_PROMPT_REG, handle->buffer, NULL, NULL, NULL);
-printf("pdip_recv():\t\"%s\"\n", handle->buffer);	// REMOVE_ME
+	size_t basesize = 0;
+	size_t datasize = 0;
+	char *buffer = (char *)0;
+	int result = pdip_recv(handle->pdip, MDB_PROMPT_REG, &buffer, &basesize, &datasize, (struct timeval*)0);
+printf("pdip_recv():\t%d\t%zd\t\"%s\"\n", result, datasize, buffer);	// REMOVE_ME
 
+	free(handle->buffer);
+	handle->buffer = malloc(datasize+1);
+	memset(handle->buffer, 0, datasize+1);
+	strncpy(handle->buffer, buffer, datasize);
+
+	free(buffer);
 	return handle->buffer;
 }
 
@@ -282,9 +290,9 @@ void mdb_close_breakpoint(mdbbp *breakpoint)
 int mdb_break_line(mdbhandle *handle, char *filename, size_t linenumber, size_t passCount)
 {
 	if (passCount)
-		mdb_put(handle, "break %s:%u %u", filename, linenumber, passCount);
+		mdb_trans(handle, "break %s:%u %u\n", filename, linenumber, passCount);
 	else
-		mdb_put(handle, "break %s:%u", filename, linenumber);
+		mdb_trans(handle, "break %s:%u\n", filename, linenumber);
 
 	return mdb_bn_line(handle, filename, linenumber);
 }
@@ -292,9 +300,9 @@ int mdb_break_line(mdbhandle *handle, char *filename, size_t linenumber, size_t 
 int mdb_break_addr(mdbhandle *handle, mdbptr address, unsigned int passCount)
 {
 	if (passCount)
-		mdb_put(handle, "break *%"MDB_PRIXPTR" %u", address, passCount);
+		mdb_trans(handle, "break *%"MDB_PRIXPTR" %u\n", address, passCount);
 	else
-		mdb_put(handle, "break *%"MDB_PRIXPTR, address);
+		mdb_trans(handle, "break *%"MDB_PRIXPTR"\n", address);
 
 	return mdb_bn_addr(handle, address);
 }
@@ -302,42 +310,77 @@ int mdb_break_addr(mdbhandle *handle, mdbptr address, unsigned int passCount)
 int mdb_break_func(mdbhandle *handle, char *function, unsigned int passCount)
 {
 	if (passCount)
-		mdb_put(handle, "break %s %u", function, passCount);
+		mdb_trans(handle, "break %s %u\n", function, passCount);
 	else
-		mdb_put(handle, "break %s", function);
+		mdb_trans(handle, "break %s\n", function);
 
 	return mdb_bn_func(handle, function);
 }
 
 void mdb_delete(mdbhandle *handle, int breakpoint)
 {
-	mdb_put(handle, "delete %u", breakpoint);
+	mdb_trans(handle, "delete %u\n", breakpoint);
 }
 
 void mdb_delete_all(mdbhandle *handle)
 {
-	mdb_put(handle, "delete");
+	mdb_trans(handle, "delete\n");
 }
 
 int mdb_watch(mdbhandle *handle, mdbptr address, char *breakonType, unsigned int passCount)
 {
-	if (passCount)
-		mdb_trans(handle, "watch %"MDB_PRIXPTR" %s %u", address, breakonType, passCount);
-	else
-		mdb_trans(handle, "watch %"MDB_PRIXPTR" %s", address, breakonType);
+	char *result;
+	size_t size;
+	if (passCount) {
+		result = mdb_trans(handle, "watch 0x%"MDB_PRIXPTR" %s %u\n", address, breakonType, passCount);
+		size_t size = snprintf(NULL, 0, "watch 0x%"MDB_PRIXPTR" %s %u\nWatchpoint ", address, breakonType, passCount);
+	}
+	else {
+		result = mdb_trans(handle, "watch 0x%"MDB_PRIXPTR" %s\n", address, breakonType);
+		size_t size = snprintf(NULL, 0, "watch 0x%"MDB_PRIXPTR" %s\nWatchpoint ", address, breakonType);
+	}
 
-	return mdb_bn_addr(handle, address);
+	int bn = strtol(result+size, NULL, 10);
+	return bn;
 }
-
 
 int mdb_watch_val(mdbhandle *handle, mdbptr address, char *breakonType, unsigned char value, size_t passCount)
 {
 	if (passCount)
-		mdb_put(handle, "watch %"MDB_PRIXPTR" %s:%x %u", address, breakonType, value, passCount);
+		mdb_trans(handle, "watch %"MDB_PRIXPTR" %s:%x %u\n", address, breakonType, value, passCount);
 	else
-		mdb_put(handle, "watch %"MDB_PRIXPTR" %s:%x", address, breakonType, value);
+		mdb_trans(handle, "watch %"MDB_PRIXPTR" %s:%x\n", address, breakonType, value);
 
 	return mdb_bn_addr(handle, address);
+}
+
+int mdb_watch_name(mdbhandle *handle, const char *name, char *breakonType, unsigned int passCount)
+{
+	char *result;
+	size_t size = 0;
+	if (passCount) {
+		result = mdb_trans(handle, "watch %s %s %u\n", name, breakonType, passCount);
+		size_t size = snprintf(NULL, 0, "watch %s %s %u\nWatchpoint ", name, breakonType, passCount);
+	}
+	else {
+		result = mdb_trans(handle, "watch %s %s\n", name, breakonType);
+		size_t size = snprintf(NULL, 0, "watch %s %s\nWatchpoint ", name, breakonType);
+	}
+printf("result:\t\"%s\"\n", result);
+printf("pulling watchpoing number:\t%zu\t%c\n", size, result+size);
+	int bn = strtol(result+size, NULL, 10);
+	return bn;
+}
+
+
+int mdb_watch_name_val(mdbhandle *handle, const char *name, char *breakonType, unsigned char value, size_t passCount)
+{
+	if (passCount)
+		mdb_trans(handle, "watch %s %s:%x %u\n", name, breakonType, value, passCount);
+	else
+		mdb_trans(handle, "watch %s %s:%x\n", name, breakonType, value);
+
+	return 0;//mdb_bn_addr(handle, address);
 }
 
 
@@ -347,30 +390,30 @@ long mdb_print_var(mdbhandle *handle, char f, size_t value, char *variable)
 {
 	char *result = NULL;
 	if (value)
-		result = mdb_trans(handle, "print /%c /datasize:%u %s", f, value, variable);
+		result = mdb_trans(handle, "print /%c /datasize:%u %s\n", f, value, variable);
 	else
-		result = mdb_trans(handle, "print /%c %s", f, variable);
+		result = mdb_trans(handle, "print /%c %s\n", f, variable);
 	return strtol(result, NULL, 0);
 }
 
 mdbptr mdb_print_var_addr(mdbhandle *handle, const char *variable)
 {
-	char *result = mdb_trans(handle, "print /a %s", variable);
-	printf("\t\tmdb_print_var_addr() result:\t%s\n", result);	// REMOVE_ME
-	mdbptr addr = 0;
-	sscanf(result, "The Address of %s: 0x"MDB_SCNxPTR, NULL, addr);
-	printf("\t\tpointer conversion:\t%"MDB_PRIXPTR"\n", addr);	// REMOVE ME
+	char *result = mdb_trans(handle, "print /a %s\n", variable);
+
+	// size == offset of desired value
+	size_t size = snprintf(NULL, 0, "print /a %s\nThe Address of %s: ", variable, variable);
+	mdbptr addr = (mdbptr)strtol(result+size, NULL, 0);
 	return addr;
 }
 
 const char *mdb_print_pin(mdbhandle *handle, char *pinName)
 {
-	return mdb_trans(handle, "print pin %s", pinName);
+	return mdb_trans(handle, "print pin %s\n", pinName);
 }
 
 void mdb_stim(mdbhandle *handle)
 {
-	mdb_put(handle, "stim");
+	mdb_trans(handle, "stim\n");
 }
 
 void mdb_write_mem(mdbhandle *handle, char t, size_t addr, int wordc, mdbword wordv[])
@@ -383,7 +426,7 @@ void mdb_write_mem(mdbhandle *handle, char t, size_t addr, int wordc, mdbword wo
 	for (i = 0; i < size; i++)
 		sprintf(all_words, "%s%"MDB_PRIWORD" ", all_words, wordv[i]);
 	all_words[size-1] = '\0';
-	mdb_put(handle, "write /%c %x %s", t, addr, all_words);
+	mdb_trans(handle, "write /%c %x %s\n", t, addr, all_words);
 
 	free(all_words);
 }
@@ -391,19 +434,19 @@ void mdb_write_mem(mdbhandle *handle, char t, size_t addr, int wordc, mdbword wo
 void mdb_write_pins(mdbhandle *handle, char *pinName, int pinState)
 {
 	if (pinState)
-		mdb_put(handle, "write %s high", pinName);
+		mdb_trans(handle, "write %s high\n", pinName);
 	else
-		mdb_put(handle, "write %s low", pinName);
+		mdb_trans(handle, "write %s low\n", pinName);
 }
 
 void mdb_write_pinv(mdbhandle *handle, char *pinName, int pinVoltage)
 {
-	mdb_put(handle, "write %s high", pinName, pinVoltage);
+	mdb_trans(handle, "write %s high\n", pinName, pinVoltage);
 }
 
 const char *mdb_x(mdbhandle *handle, char t, unsigned int n, char f, char u, mdbptr addr)
 {
-	mdb_put(handle, "x /%c%u%c%c %x", t, n, f, u, addr);
+	mdb_trans(handle, "x /%c%u%c%c %x\n", t, n, f, u, addr);
 	return mdb_get(handle);
 }
 
@@ -418,81 +461,81 @@ void mdb_device(mdbhandle *handle, char *devicename)
 void mdb_hwtool(mdbhandle *handle, char *toolType, int p, size_t index)
 {
 	if (p)
-		mdb_trans(handle, "Hwtool %s -p %u", toolType, index);
+		mdb_trans(handle, "Hwtool %s -p %u\n", toolType, index);
 	else
-		mdb_trans(handle, "Hwtool %s %u", toolType, index);
+		mdb_trans(handle, "Hwtool %s %u\n", toolType, index);
 }
 
 char *mdb_hwtool_list(mdbhandle *handle)
 {
-	return mdb_trans(handle, "Hwtool");
+	return mdb_trans(handle, "Hwtool\n");
 }
 
 // others
 char *mdb_echo(mdbhandle *handle, char *text)
 {
-	return mdb_trans(handle, "echo %s", text);
+	return mdb_trans(handle, "echo %s\n", text);
 }
 
 char *mdb_help(mdbhandle *handle, char *text)
 {
 	char *result = NULL;
 	if (text)
-		result = mdb_trans(handle, "help %s", text);
+		result = mdb_trans(handle, "help %s\n", text);
 	else
-		result = mdb_trans(handle, "help");
+		result = mdb_trans(handle, "help\n");
 	return result;
 }
 
 void mdb_quit(mdbhandle *handle)
 {
-	mdb_put(handle, "quit");
+	mdb_trans(handle, "quit\n");
 }
 
 void mdb_set(mdbhandle *handle, char *tool_property_name, char *tool_property_value)
 {
-	mdb_put(handle, "set %s %s", tool_property_name, tool_property_value);
+	mdb_trans(handle, "set %s %s\n", tool_property_name, tool_property_value);
 }
 
 void mdb_sleep(mdbhandle *handle, unsigned int milliseconds)
 {
-	mdb_put(handle, "Sleep %u", milliseconds);
+	mdb_trans(handle, "Sleep %u\n", milliseconds);
 }
 
 void mdb_stopwatch_val(mdbhandle *handle)
 {
-	mdb_put(handle, "Stopwatch");
+	mdb_trans(handle, "Stopwatch\n");
 }
 
 void mdb_stopwatch_prop(mdbhandle *handle, char *stopwatch_property)
 {
-	mdb_put(handle, "Stopwatch %s", stopwatch_property);
+	mdb_trans(handle, "Stopwatch %s\n", stopwatch_property);
 }
 
 void mdb_wait(mdbhandle *handle)
 {
-	mdb_put(handle, "Wait");
+	mdb_trans(handle, "Wait\n");
 }
 
 void mdb_wait_ms(mdbhandle *handle, unsigned int milliseconds)
 {
-	mdb_put(handle, "Wait %s", milliseconds);
+	mdb_trans(handle, "Wait %s\n", milliseconds);
 }
 
 void mdb_cd(mdbhandle *handle, char *DIR)
 {
-	mdb_put(handle, "cd %s", DIR);
+	mdb_trans(handle, "cd %s\n", DIR);
 }
 
 mdbbp **mdb_info_break(mdbhandle *handle)
 {
-	mdb_trans(handle, "info breakpoints");
+	mdb_trans(handle, "info breakpoints\n");
 	return parse_breakpoints(handle->buffer);
 }
 
 mdbbp *mdb_info_break_n(mdbhandle *handle, size_t n)
 {
-	mdb_trans(handle, "info breakpoints %u", n);
+	mdb_trans(handle, "info breakpoints %u\n", n);
 	mdbbp **result = parse_breakpoints(handle->buffer);
 
 	size_t i;
@@ -504,62 +547,62 @@ mdbbp *mdb_info_break_n(mdbhandle *handle, size_t n)
 
 char *mdb_list(mdbhandle *handle)
 {
-	return mdb_trans(handle, "list");
+	return mdb_trans(handle, "list\n");
 }
 
 char *mdb_list_line(mdbhandle *handle, size_t linenum)
 {
-	return mdb_trans(handle, "list %u", linenum);
+	return mdb_trans(handle, "list %u\n", linenum);
 }
 
 char *mdb_list_first(mdbhandle *handle, size_t first)
 {
-	return mdb_trans(handle, "list %u,", first);
+	return mdb_trans(handle, "list %u,\n", first);
 }
 
 char *mdb_list_last(mdbhandle *handle, size_t last)
 {
-	return mdb_trans(handle, "list ,%u", last);
+	return mdb_trans(handle, "list ,%u\n", last);
 }
 
 char *mdb_list_ftol(mdbhandle *handle, size_t first, size_t last)
 {
-	return mdb_trans(handle, "list %u,%u", first, last);
+	return mdb_trans(handle, "list %u,%u\n", first, last);
 }
 
 char *mdb_list_prev(mdbhandle *handle)
 {
-	return mdb_trans(handle, "list -");
+	return mdb_trans(handle, "list -\n");
 }
 
 char *mdb_list_next(mdbhandle *handle)
 {
-	return mdb_trans(handle, "list +");
+	return mdb_trans(handle, "list +\n");
 }
 
 char *mdb_list_func(mdbhandle *handle, char *function)
 {
-	return mdb_trans(handle, "list %s", function);
+	return mdb_trans(handle, "list %s\n", function);
 }
 
 char *mdb_list_fline(mdbhandle *handle, char *file, size_t linenum)
 {
-	return mdb_trans(handle, "list %s:%u", file, linenum);
+	return mdb_trans(handle, "list %s:%u\n", file, linenum);
 }
 
 char *mdb_list_ffunc(mdbhandle *handle, char *file, char *function)
 {
-	return mdb_trans(handle, "list %s:%s", file, function);
+	return mdb_trans(handle, "list %s:%s\n", file, function);
 }
 
 void mdb_set_list(mdbhandle *handle, size_t count)
 {
-	mdb_put(handle, "set system.listsize %u", count);
+	mdb_trans(handle, "set system.listsize %u\n", count);
 }
 
 char *mdb_pwd(mdbhandle *handle)
 {
-	return mdb_trans(handle, "pwd");
+	return mdb_trans(handle, "pwd\n");
 }
 
 
@@ -567,17 +610,17 @@ char *mdb_pwd(mdbhandle *handle)
 
 void mdb_dump(mdbhandle *handle, char *m, char *filename)
 {
-	mdb_put(handle, "Dump -%s %s", m, filename);
+	mdb_trans(handle, "Dump -%s %s\n\n", m, filename);
 }
 
 void mdb_program(mdbhandle *handle, char *executableImageFile)
 {
-	mdb_put(handle, "Program %s", executableImageFile);
+	mdb_trans(handle, "Program %s\n", executableImageFile);
 }
 
 void mdb_upload(mdbhandle *handle)
 {
-	mdb_put(handle, "Upload");
+	mdb_trans(handle, "Upload\n");
 }
 
 
@@ -585,37 +628,37 @@ void mdb_upload(mdbhandle *handle)
 
 void mdb_continue(mdbhandle *handle)
 {
-	mdb_put(handle, "Continue");
+	mdb_trans(handle, "Continue\n");
 }
 
 void mdb_halt(mdbhandle *handle)
 {
-	mdb_put(handle, "halt");
+	mdb_trans(handle, "halt\n");
 }
 
 void mdb_next(mdbhandle *handle)
 {
-	mdb_put(handle, "Next");
+	mdb_trans(handle, "Next\n");
 }
 
 void mdb_run(mdbhandle *handle)
 {
-	mdb_put(handle, "Run");
+	mdb_trans(handle, "Run\n");
 }
 
 void mdb_step(mdbhandle *handle)
 {
-	mdb_put(handle, "Step");
+	mdb_trans(handle, "Step\n");
 }
 
 void mdb_stepi(mdbhandle *handle)
 {
-	mdb_put(handle, "Stepi %u");
+	mdb_trans(handle, "Stepi %u\n");
 }
 
 void mdb_stepi_cnt(mdbhandle *handle, unsigned int count)
 {
-	mdb_put(handle, "Stepi %u", count);
+	mdb_trans(handle, "Stepi %u\n", count);
 }
 
 
@@ -625,9 +668,9 @@ char *mdb_backtrace(mdbhandle *handle, int full, int n)
 {
 	char *result = NULL;
 	if (full)
-		result = mdb_trans(handle, "backtrace full %d", n);
+		result = mdb_trans(handle, "backtrace full %d\n", n);
 	else
-		result = mdb_trans(handle, "backtrace %d", n);
+		result = mdb_trans(handle, "backtrace %d\n", n);
 	return result;
 }
 
