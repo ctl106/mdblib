@@ -190,6 +190,7 @@ void mdb_vput(mdbhandle *handle, const char *format, va_list arg)
 	va_end(arg2);
 	char *buffer = malloc(size);
 	vsnprintf(buffer, size, format, arg);
+printf("mdb_vput():\t\"%s\"\n", buffer);
 	pdip_send(handle->pdip, buffer);
 	free(buffer);
 }
@@ -198,16 +199,27 @@ char *mdb_get(mdbhandle *handle)
 {
 	size_t basesize = 0;
 	size_t datasize = 0;
-	char *buffer = (char *)0;
-	int result = pdip_recv(handle->pdip, MDB_PROMPT_REG, &buffer, &basesize, &datasize, (struct timeval*)0);
-printf("pdip_recv():\t%d\t%zd\t\"%s\"\n", result, datasize, buffer);	// REMOVE_ME
-
 	free(handle->buffer);
-	handle->buffer = malloc(datasize+1);
-	memset(handle->buffer, 0, datasize+1);
-	strncpy(handle->buffer, buffer, datasize);
+	handle->buffer = (char *)0;
+	int result = pdip_recv(handle->pdip, MDB_PROMPT_REG, &handle->buffer, &basesize, &datasize, (struct timeval*)0);
+printf("pdip_recv():\t%d\t%zd\t\"%s\"\n", result, datasize, handle->buffer);	// REMOVE_ME
 
-	free(buffer);
+	// check for breakpoint message
+	static const char bp_msg[] = "Stop at";//"\nSingle breakpoint: @0x";
+	static const char halted[] = "HALTED\n";
+	//result = strncmp(handle->buffer, bp_msg, sizeof(bp_msg)/sizeof(char)-1);
+	result = strstr(handle->buffer, bp_msg);
+//printf("strncmp():\t%d\tsize:\t%d\n", result, sizeof(bp_msg)/sizeof(char)-1);
+	if (result) {// == 0) {
+printf("breakpoint message detected!\n");
+		handle->state = mdb_stopped;
+		// eat "HALTED" message
+		pdip_recv(handle->pdip, halted, &handle->buffer, &basesize, &datasize, (struct timeval*)0);
+		// read the actual message we were after
+		result = pdip_recv(handle->pdip, MDB_PROMPT_REG, &handle->buffer, &basesize, &datasize, (struct timeval*)0);
+printf("re-pdip_recv():\t%d\t%zd\t\"%s\"\n", result, datasize, handle->buffer);	// REMOVE_ME
+	}
+
 	return handle->buffer;
 }
 
@@ -360,14 +372,12 @@ int mdb_watch_name(mdbhandle *handle, const char *name, char *breakonType, unsig
 	size_t size = 0;
 	if (passCount) {
 		result = mdb_trans(handle, "watch %s %s %u\n", name, breakonType, passCount);
-		size_t size = snprintf(NULL, 0, "watch %s %s %u\nWatchpoint ", name, breakonType, passCount);
+		size = snprintf(NULL, 0, "watch %s %s %u\nWatchpoint ", name, breakonType, passCount);
 	}
 	else {
 		result = mdb_trans(handle, "watch %s %s\n", name, breakonType);
-		size_t size = snprintf(NULL, 0, "watch %s %s\nWatchpoint ", name, breakonType);
+		size = snprintf(NULL, 0, "watch %s %s\nWatchpoint ", name, breakonType);
 	}
-printf("result:\t\"%s\"\n", result);
-printf("pulling watchpoing number:\t%zu\t%c\n", size, result+size);
 	int bn = strtol(result+size, NULL, 10);
 	return bn;
 }
@@ -389,11 +399,24 @@ int mdb_watch_name_val(mdbhandle *handle, const char *name, char *breakonType, u
 long mdb_print_var(mdbhandle *handle, char f, size_t value, char *variable)
 {
 	char *result = NULL;
-	if (value)
+	size_t size = 0;
+	if (value) {
 		result = mdb_trans(handle, "print /%c /datasize:%u %s\n", f, value, variable);
-	else
+		if (f == 'a')
+			size = snprintf(NULL, 0, "print /a /datasize:%u %s\nThe Address of %s: ", value, variable, variable);
+		else
+			size = snprintf(NULL, 0, "print /%c /datasize:%u %s\n%s=\n", f, value, variable, variable);
+	} else {
 		result = mdb_trans(handle, "print /%c %s\n", f, variable);
-	return strtol(result, NULL, 0);
+		if (f == 'a')
+			size = snprintf(NULL, 0, "print /a %s\nThe Address of %s: ", variable, variable);
+		else
+			size = snprintf(NULL, 0, "print /%c %s\n%s=\n", f, variable, variable);
+	}
+
+	long out = strtol(result+size, NULL, 0);
+printf("variable value:\t%ld\n", out);
+	return out;
 }
 
 mdbptr mdb_print_var_addr(mdbhandle *handle, const char *variable)
@@ -421,13 +444,13 @@ void mdb_write_mem(mdbhandle *handle, char t, size_t addr, int wordc, mdbword wo
 	size_t size = wordc*(sizeof(mdbword) + 1);
 	char *all_words = malloc(size);
 	memset(all_words, 0, size);
-
+printf("size:\t%d\n", size);
 	size_t i;
 	for (i = 0; i < size; i++)
-		sprintf(all_words, "%s%"MDB_PRIWORD" ", all_words, wordv[i]);
+		snprintf(all_words, size, "%s%"MDB_PRIWORD" ", all_words, wordv[i]);
 	all_words[size-1] = '\0';
 	mdb_trans(handle, "write /%c %x %s\n", t, addr, all_words);
-
+printf("call to free...\n");
 	free(all_words);
 }
 
@@ -629,6 +652,7 @@ void mdb_upload(mdbhandle *handle)
 void mdb_continue(mdbhandle *handle)
 {
 	mdb_trans(handle, "Continue\n");
+	handle->state = mdb_running;
 }
 
 void mdb_halt(mdbhandle *handle)
@@ -653,7 +677,7 @@ void mdb_step(mdbhandle *handle)
 
 void mdb_stepi(mdbhandle *handle)
 {
-	mdb_trans(handle, "Stepi %u\n");
+	mdb_trans(handle, "Stepi\n");
 }
 
 void mdb_stepi_cnt(mdbhandle *handle, unsigned int count)
