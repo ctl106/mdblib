@@ -15,6 +15,31 @@
 #include "mdblib.h"
 
 
+#define MDB_EFRMT	"ERROR!\n\tFile:\t%s\n\tLine:\t%d\n\tFunc:\t%s()\n\tErrno:\t%d\n\tErrstr:\t%s\n"
+#define MDB_ERR() 			\
+	do {					\
+		fprintf(			\
+			stderr,			\
+			MDB_EFRMT,		\
+			__FILE__,		\
+			__LINE__,		\
+			__func__,		\
+			errno,			\
+			strerror(errno)	\
+			);				\
+		exit(1);			\
+	} while (0);
+
+#ifdef DEBUG
+#define MDB_DBG(format, ...)			\
+	do {									\
+			fprintf(stderr, "%s: %s(): %d: "format, __FILE__, __func__, __LINE__, ## __VA_ARGS__ );	\
+	} while (0);
+#else
+#define MDB_DBG(format, args...)	(void *)NULL;
+#endif // DEBUG
+
+
 #ifndef MDB_EXEC
 #define MDB_EXEC "mdb"
 #endif // MDB_EXEC
@@ -130,12 +155,7 @@ unsigned long long time_in_ms()
 
 mdbhandle *mdb_init()
 {
-	MDB_DBG("Initializing an mdb handle.\n");
-#ifdef DEBUG
-	printf("This should print...\n");
-#else
-	printf("why didn't the other message print...?\n");
-#endif // DEBUG
+	MDB_DBG("Initializing an MDB handle.\n");
 	mdbhandle *handle = malloc(sizeof(mdbhandle));
 
 	// set up pdip
@@ -168,6 +188,8 @@ printf("PID:\t%d\n", handle->pid);	// REMOVE_ME
 
 void mdb_close(mdbhandle *handle)
 {
+	MDB_DBG("Closing an MDB handle\n");
+
 	int status = 0;
 	pdip_status(handle->pdip, &status, 1);	// let the process exit gracefully
 	pdip_delete(handle->pdip, NULL);
@@ -197,9 +219,8 @@ void mdb_vput(mdbhandle *handle, const char *format, va_list arg)
 	char *buffer = malloc(size);
 	if (buffer == NULL) MDB_ERR();
 	vsnprintf(buffer, size, format, arg);
-printf("mdb_vput():\t\"%s\"\n", buffer);
+MDB_DBG("\n\t%s\n", buffer);
 	int result = pdip_send(handle->pdip, buffer);
-printf("mdb_vput() result:\t%d\n", result);
 	if (result < 0 ) MDB_ERR();
 	free(buffer);
 }
@@ -220,6 +241,8 @@ char *mdb_get(mdbhandle *handle)
 	result = strstr(handle->buffer, bp_msg);
 //printf("strncmp():\t%d\tsize:\t%d\n", result, sizeof(bp_msg)/sizeof(char)-1);
 	if (result) {
+		MDB_DBG("Breakpoint detected; re-attempting read\n");
+MDB_DBG("%s\n", handle->buffer);
 		handle->state = mdb_stopped;
 		// eat "HALTED" message
 		result = pdip_recv(handle->pdip, halted, &handle->buffer, &basesize, &datasize, (struct timeval*)0);
@@ -229,7 +252,6 @@ char *mdb_get(mdbhandle *handle)
 		if (result == PDIP_RECV_ERROR) MDB_ERR();
 	}
 
-printf("pdip_recv():\t%d\t%zd\t\"%s\"\n", result, datasize, handle->buffer);	// REMOVE_ME
 	return handle->buffer;
 }
 
@@ -425,7 +447,6 @@ long mdb_print_var(mdbhandle *handle, char f, size_t value, char *variable)
 	}
 
 	long out = strtol(result+size, NULL, 0);
-printf("variable value:\t%ld\n", out);
 	return out;
 }
 
@@ -435,7 +456,7 @@ mdbptr mdb_print_var_addr(mdbhandle *handle, const char *variable)
 
 	// size == offset of desired value
 	size_t size = snprintf(NULL, 0, "print /a %s\nThe Address of %s: ", variable, variable);
-	mdbptr addr = (mdbptr)strtol(result+size, NULL, 0);
+	mdbptr addr = (mdbptr)strtol(result+size, NULL, 16);
 	return addr;
 }
 
@@ -454,13 +475,13 @@ void mdb_write_mem(mdbhandle *handle, char t, size_t addr, int wordc, mdbword wo
 	size_t size = wordc*(sizeof(mdbword) + 1);
 	char *all_words = malloc(size);
 	memset(all_words, 0, size);
-printf("size:\t%d\n", size);
 	size_t i;
-	for (i = 0; i < size; i++)
+	for (i = 0; i < wordc; i++) {
 		snprintf(all_words, size, "%s%"MDB_PRIWORD" ", all_words, wordv[i]);
+		printf("%"MDB_PRIWORD"\t%c\t%s\n", wordv[i], wordv[i], all_words);
+	}
 	all_words[size-1] = '\0';
-	mdb_trans(handle, "write /%c %x %s\n", t, addr, all_words);
-printf("call to free...\n");
+	mdb_trans(handle, "write /%c 0x%x %s\n", t, addr, all_words);
 	free(all_words);
 }
 
