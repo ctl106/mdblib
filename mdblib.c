@@ -130,6 +130,12 @@ unsigned long long time_in_ms()
 
 mdbhandle *mdb_init()
 {
+	MDB_DBG("Initializing an mdb handle.\n");
+#ifdef DEBUG
+	printf("This should print...\n");
+#else
+	printf("why didn't the other message print...?\n");
+#endif // DEBUG
 	mdbhandle *handle = malloc(sizeof(mdbhandle));
 
 	// set up pdip
@@ -189,9 +195,12 @@ void mdb_vput(mdbhandle *handle, const char *format, va_list arg)
 	size_t size = vsnprintf(NULL, 0, format, arg2) + 1;
 	va_end(arg2);
 	char *buffer = malloc(size);
+	if (buffer == NULL) MDB_ERR();
 	vsnprintf(buffer, size, format, arg);
 printf("mdb_vput():\t\"%s\"\n", buffer);
-	pdip_send(handle->pdip, buffer);
+	int result = pdip_send(handle->pdip, buffer);
+printf("mdb_vput() result:\t%d\n", result);
+	if (result < 0 ) MDB_ERR();
 	free(buffer);
 }
 
@@ -202,7 +211,7 @@ char *mdb_get(mdbhandle *handle)
 	free(handle->buffer);
 	handle->buffer = (char *)0;
 	int result = pdip_recv(handle->pdip, MDB_PROMPT_REG, &handle->buffer, &basesize, &datasize, (struct timeval*)0);
-printf("pdip_recv():\t%d\t%zd\t\"%s\"\n", result, datasize, handle->buffer);	// REMOVE_ME
+	if (result == PDIP_RECV_ERROR) MDB_ERR();
 
 	// check for breakpoint message
 	static const char bp_msg[] = "Stop at";//"\nSingle breakpoint: @0x";
@@ -210,16 +219,17 @@ printf("pdip_recv():\t%d\t%zd\t\"%s\"\n", result, datasize, handle->buffer);	// 
 	//result = strncmp(handle->buffer, bp_msg, sizeof(bp_msg)/sizeof(char)-1);
 	result = strstr(handle->buffer, bp_msg);
 //printf("strncmp():\t%d\tsize:\t%d\n", result, sizeof(bp_msg)/sizeof(char)-1);
-	if (result) {// == 0) {
-printf("breakpoint message detected!\n");
+	if (result) {
 		handle->state = mdb_stopped;
 		// eat "HALTED" message
-		pdip_recv(handle->pdip, halted, &handle->buffer, &basesize, &datasize, (struct timeval*)0);
+		result = pdip_recv(handle->pdip, halted, &handle->buffer, &basesize, &datasize, (struct timeval*)0);
+		if (result == PDIP_RECV_ERROR) MDB_ERR();
 		// read the actual message we were after
 		result = pdip_recv(handle->pdip, MDB_PROMPT_REG, &handle->buffer, &basesize, &datasize, (struct timeval*)0);
-printf("re-pdip_recv():\t%d\t%zd\t\"%s\"\n", result, datasize, handle->buffer);	// REMOVE_ME
+		if (result == PDIP_RECV_ERROR) MDB_ERR();
 	}
 
+printf("pdip_recv():\t%d\t%zd\t\"%s\"\n", result, datasize, handle->buffer);	// REMOVE_ME
 	return handle->buffer;
 }
 

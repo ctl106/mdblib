@@ -4,6 +4,30 @@
 
 #include <stdarg.h>
 
+#define MDB_EFRMT	"ERROR!\n\tFile:\t%s\n\tLine:\t%d\n\tFunc:\t%s()\n\tErrno:\t%d\n\tErrstr:\t%s\n"
+#define MDB_ERR() 			\
+	do {					\
+		fprintf(			\
+			stderr,			\
+			MDB_EFRMT,		\
+			__FILE__,		\
+			__LINE__,		\
+			__func__,		\
+			errno,			\
+			strerror(errno)	\
+			);				\
+		exit(1);			\
+	} while (0);
+
+#ifdef DEBUG
+#define MDB_DBG(format, ...)			\
+	do {									\
+			fprintf(stderr, format, ## __VA_ARGS__ );	\
+	} while (0);
+#else
+#define MDB_DBG(format, args...)	(void *)NULL;
+#endif // DEBUG
+
 
 #ifndef MDB_TIMEOUT
 #define MDB_TIMEOUT 100
