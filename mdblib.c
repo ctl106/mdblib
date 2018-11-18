@@ -251,7 +251,7 @@ char *mdb_get(mdbhandle *handle)
 	//result = strncmp(handle->buffer, bp_msg, sizeof(bp_msg)/sizeof(char)-1);
 	char *breakpoint = strstr(handle->buffer, bp_msg);
 //printf("strncmp():\t%d\tsize:\t%d\n", result, sizeof(bp_msg)/sizeof(char)-1);
-	if (breakpoint) {
+	if (breakpoint && !strstr(handle->buffer, "quit")) {
 		MDB_DBG("Breakpoint detected; re-attempting read\n");
 		MDB_DBG("%s\n", handle->buffer);
 		handle->state = mdb_stopped;
