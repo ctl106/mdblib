@@ -33,10 +33,10 @@
 #ifdef DEBUG
 #define MDB_DBG(format, ...)			\
 	do {									\
-			fprintf(stderr, "%s: %s(): %d: "format, __FILE__, __func__, __LINE__, ## __VA_ARGS__ );	\
+			fprintf(stderr, "%s: %s(): %d:\n\t"format, __FILE__, __func__, __LINE__, ## __VA_ARGS__ );	\
 	} while (0);
 #else
-#define MDB_DBG(format, args...)	(void *)NULL;
+#define MDB_DBG(format, args...)
 #endif // DEBUG
 
 
@@ -141,6 +141,16 @@ mdbbp **parse_breakpoints(char *buffer)
 	return output;
 }
 
+void mdb_noop(mdbhandle *handle)
+{
+	mdb_trans(handle, "\n");
+}
+
+mdbstate mdb_state(mdbhandle *handle)
+{
+	return handle->state;
+}
+
 unsigned long long time_in_ms()
 {
 	// based off of the formula for calculating time in ms here:
@@ -174,7 +184,6 @@ mdbhandle *mdb_init()
 	cmnd[0] = MDB_EXEC;
 	cmnd[1] = (char *)0;
 	handle->pid = pdip_exec(handle->pdip, 1, cmnd);
-printf("PID:\t%d\n", handle->pid);	// REMOVE_ME
 
 	if (handle->pid < 1) {
 		mdb_close(handle);
@@ -217,10 +226,12 @@ void mdb_vput(mdbhandle *handle, const char *format, va_list arg)
 	size_t size = vsnprintf(NULL, 0, format, arg2) + 1;
 	va_end(arg2);
 	char *buffer = malloc(size);
+
 	if (buffer == NULL) MDB_ERR();
+
 	vsnprintf(buffer, size, format, arg);
-MDB_DBG("\n\t%s\n", buffer);
-	int result = pdip_send(handle->pdip, buffer);
+	MDB_DBG("%s", buffer);
+	int result = pdip_send(handle->pdip, "%s", buffer);
 	if (result < 0 ) MDB_ERR();
 	free(buffer);
 }
@@ -238,11 +249,11 @@ char *mdb_get(mdbhandle *handle)
 	static const char bp_msg[] = "Stop at";//"\nSingle breakpoint: @0x";
 	static const char halted[] = "HALTED\n";
 	//result = strncmp(handle->buffer, bp_msg, sizeof(bp_msg)/sizeof(char)-1);
-	result = strstr(handle->buffer, bp_msg);
+	char *breakpoint = strstr(handle->buffer, bp_msg);
 //printf("strncmp():\t%d\tsize:\t%d\n", result, sizeof(bp_msg)/sizeof(char)-1);
-	if (result) {
+	if (breakpoint) {
 		MDB_DBG("Breakpoint detected; re-attempting read\n");
-MDB_DBG("%s\n", handle->buffer);
+		MDB_DBG("%s\n", handle->buffer);
 		handle->state = mdb_stopped;
 		// eat "HALTED" message
 		result = pdip_recv(handle->pdip, halted, &handle->buffer, &basesize, &datasize, (struct timeval*)0);
@@ -267,60 +278,6 @@ char *mdb_trans(mdbhandle *handle, const char *format, ...)
 
 
 /*	utilities	*/
-int mdb_bn_line(mdbhandle *handle, char *filename, size_t linenumber)
-{
-	int number = -1;
-	mdbbp **breakpoints = mdb_info_break(handle);
-
-	size_t i;
-	int loop;
-	for (i = 0, loop = 1; loop; i++) {
-		if (breakpoints[i] == NULL)
-			loop = 0;
-		else if (	// need something that handles file paths better
-				strcmp(breakpoints[i]->filename, filename) == 0 &&
-				breakpoints[i]->line == linenumber
-				) {
-			number = breakpoints[i]->number;
-			loop = 0;
-		}
-
-		mdb_close_breakpoint(breakpoints[i]);
-	}
-
-	return number;
-}
-
-int mdb_bn_addr(mdbhandle *handle, mdbptr address)
-{
-	int number = -1;
-	mdbbp **breakpoints = mdb_info_break(handle);
-
-	size_t i;
-	int loop;
-	for (i = 0, loop = 1; loop; i++) {
-		if (breakpoints[i] == NULL)
-			loop = 0;
-		else if (breakpoints[i]->address == address) {
-			number = breakpoints[i]->number;
-			loop = 0;
-		}
-
-		mdb_close_breakpoint(breakpoints[i]);
-	}
-
-	return number;
-}
-
-int mdb_bn_func(mdbhandle *handle, char *function)
-{
-	// tricky... it doesn't appear "info break" gives function names
-	// it's kinda dumb that the commands for setting breakpoints
-	// doesn't print out the breakpoint number.
-#warning mdb_bn_func() does not return a useful value in current implementation
-	return -1;
-}
-
 void mdb_close_breakpoint(mdbbp *breakpoint)
 {
 	free(breakpoint->filename);
@@ -333,32 +290,66 @@ void mdb_close_breakpoint(mdbbp *breakpoint)
 
 int mdb_break_line(mdbhandle *handle, char *filename, size_t linenumber, size_t passCount)
 {
-	if (passCount)
-		mdb_trans(handle, "break %s:%u %u\n", filename, linenumber, passCount);
-	else
-		mdb_trans(handle, "break %s:%u\n", filename, linenumber);
+	static const char break_msg[] = "Breakpoint ";
+	char *result = NULL;
+	char *number_loc = NULL;
+	int number = -1;
 
-	return mdb_bn_line(handle, filename, linenumber);
+	if (passCount)
+		result = mdb_trans(handle, "break %s:%u %u\n", filename, linenumber, passCount);
+	else
+		result = mdb_trans(handle, "break %s:%u\n", filename, linenumber);
+
+	number_loc = strstr(result, break_msg);
+	if (number_loc) {
+		number_loc += strlen(break_msg);
+		number = strtol(number_loc, NULL, 0);
+	}
+
+	return number;
 }
 
 int mdb_break_addr(mdbhandle *handle, mdbptr address, unsigned int passCount)
 {
-	if (passCount)
-		mdb_trans(handle, "break *%"MDB_PRIXPTR" %u\n", address, passCount);
-	else
-		mdb_trans(handle, "break *%"MDB_PRIXPTR"\n", address);
+	static const char break_msg[] = "Breakpoint ";
+	char *result = NULL;
+	char *number_loc = NULL;
+	int number = -1;
 
-	return mdb_bn_addr(handle, address);
+	if (passCount)
+		result = mdb_trans(handle, "break *%"MDB_PRIXPTR" %u\n", address, passCount);
+	else
+		result = mdb_trans(handle, "break *%"MDB_PRIXPTR"\n", address);
+
+	number_loc = strstr(result, break_msg);
+	if (number_loc) {
+		number_loc += strlen(break_msg);
+		number = strtol(number_loc, NULL, 0);
+	}
+
+	return number;
 }
 
 int mdb_break_func(mdbhandle *handle, char *function, unsigned int passCount)
 {
-	if (passCount)
-		mdb_trans(handle, "break %s %u\n", function, passCount);
-	else
-		mdb_trans(handle, "break %s\n", function);
+	static const char break_msg[] = "Breakpoint ";
+	char *result = NULL;
+	char *number_loc = NULL;
+	int number = -1;
 
-	return mdb_bn_func(handle, function);
+
+	if (passCount)
+		result = mdb_trans(handle, "break %s %u\n", function, passCount);
+	else
+		result = mdb_trans(handle, "break %s\n", function);
+
+	number_loc = strstr(result, break_msg);
+	if (number_loc) {
+		number_loc += strlen(break_msg);
+		number = strtol(number_loc, NULL, 0);
+	}
+
+	return number;
 }
 
 void mdb_delete(mdbhandle *handle, int breakpoint)
@@ -373,71 +364,101 @@ void mdb_delete_all(mdbhandle *handle)
 
 int mdb_watch(mdbhandle *handle, mdbptr address, char *breakonType, unsigned int passCount)
 {
-	char *result;
-	size_t size;
-	if (passCount) {
+	char *result = NULL;
+	static const char wp_msg[] = "Watchpoint ";
+	char *number_loc = NULL;
+	int number = -1;
+
+	if (passCount)
 		result = mdb_trans(handle, "watch 0x%"MDB_PRIXPTR" %s %u\n", address, breakonType, passCount);
-		size_t size = snprintf(NULL, 0, "watch 0x%"MDB_PRIXPTR" %s %u\nWatchpoint ", address, breakonType, passCount);
-	}
-	else {
+	else
 		result = mdb_trans(handle, "watch 0x%"MDB_PRIXPTR" %s\n", address, breakonType);
-		size_t size = snprintf(NULL, 0, "watch 0x%"MDB_PRIXPTR" %s\nWatchpoint ", address, breakonType);
+
+	number_loc = strstr(result, wp_msg);
+	if (number_loc) {
+		number_loc += strlen(wp_msg);
+		number = strtol(number_loc, NULL, 0);
 	}
 
-	int bn = strtol(result+size, NULL, 10);
-	return bn;
+	return number;
 }
 
-int mdb_watch_val(mdbhandle *handle, mdbptr address, char *breakonType, unsigned char value, size_t passCount)
+int mdb_watch_val(mdbhandle *handle, mdbptr address, char *breakonType, mdbword value, size_t passCount)
 {
-	if (passCount)
-		mdb_trans(handle, "watch %"MDB_PRIXPTR" %s:%x %u\n", address, breakonType, value, passCount);
-	else
-		mdb_trans(handle, "watch %"MDB_PRIXPTR" %s:%x\n", address, breakonType, value);
+	char *result = NULL;
+	static const char wp_msg[] = "Watchpoint ";
+	char *number_loc = NULL;
+	int number = -1;
 
-	return mdb_bn_addr(handle, address);
+	if (passCount)
+		result = mdb_trans(handle, "watch %"MDB_PRIXPTR" %s:%x %u\n", address, breakonType, value, passCount);
+	else
+		result = mdb_trans(handle, "watch %"MDB_PRIXPTR" %s:%x\n", address, breakonType, value);
+
+	number_loc = strstr(result, wp_msg);
+	if (number_loc) {
+		number_loc += strlen(wp_msg);
+		number = strtol(number_loc, NULL, 0);
+	}
+
+	return number;
 }
 
 int mdb_watch_name(mdbhandle *handle, const char *name, char *breakonType, unsigned int passCount)
 {
-	char *result;
-	size_t size = 0;
-	if (passCount) {
+	char *result = NULL;
+	static const char wp_msg[] = "Watchpoint ";
+	char *number_loc = NULL;
+	int number = -1;
+
+	if (passCount)
 		result = mdb_trans(handle, "watch %s %s %u\n", name, breakonType, passCount);
-		size = snprintf(NULL, 0, "watch %s %s %u\nWatchpoint ", name, breakonType, passCount);
-	}
-	else {
+	else
 		result = mdb_trans(handle, "watch %s %s\n", name, breakonType);
-		size = snprintf(NULL, 0, "watch %s %s\nWatchpoint ", name, breakonType);
+
+	number_loc = strstr(result, wp_msg);
+	if (number_loc) {
+		number_loc += strlen(wp_msg);
+		number = strtol(number_loc, NULL, 0);
 	}
-	int bn = strtol(result+size, NULL, 10);
-	return bn;
+
+	return number;
 }
 
-
-int mdb_watch_name_val(mdbhandle *handle, const char *name, char *breakonType, unsigned char value, size_t passCount)
+int mdb_watch_name_val(mdbhandle *handle, const char *name, char *breakonType, mdbword value, size_t passCount)
 {
+	char *result = NULL;
+	static const char wp_msg[] = "Watchpoint ";
+	char *number_loc = NULL;
+	int number = -1;
+
 	if (passCount)
 		mdb_trans(handle, "watch %s %s:%x %u\n", name, breakonType, value, passCount);
 	else
 		mdb_trans(handle, "watch %s %s:%x\n", name, breakonType, value);
 
-	return 0;//mdb_bn_addr(handle, address);
+	number_loc = strstr(result, wp_msg);
+	if (number_loc) {
+		number_loc += strlen(wp_msg);
+		number = strtol(number_loc, NULL, 0);
+	}
+
+	return number;
 }
 
 
 // data
 
-long mdb_print_var(mdbhandle *handle, char f, size_t value, char *variable)
+long mdb_print_var(mdbhandle *handle, char f, size_t value, const char *variable)
 {
 	char *result = NULL;
 	size_t size = 0;
 	if (value) {
-		result = mdb_trans(handle, "print /%c /datasize:%u %s\n", f, value, variable);
+		result = mdb_trans(handle, "print /%c /datasize:%zu %s\n", f, value, variable);
 		if (f == 'a')
-			size = snprintf(NULL, 0, "print /a /datasize:%u %s\nThe Address of %s: ", value, variable, variable);
+			size = snprintf(NULL, 0, "print /a /datasize:%zu %s\nThe Address of %s: ", value, variable, variable);
 		else
-			size = snprintf(NULL, 0, "print /%c /datasize:%u %s\n%s=\n", f, value, variable, variable);
+			size = snprintf(NULL, 0, "print /%c /datasize:%zu %s\n%s=\n", f, value, variable, variable);
 	} else {
 		result = mdb_trans(handle, "print /%c %s\n", f, variable);
 		if (f == 'a')
@@ -475,12 +496,12 @@ void mdb_write_mem(mdbhandle *handle, char t, size_t addr, int wordc, mdbword wo
 	size_t size = wordc*(sizeof(mdbword) + 1);
 	char *all_words = malloc(size);
 	memset(all_words, 0, size);
+
 	size_t i;
-	for (i = 0; i < wordc; i++) {
+	for (i = 0; i < wordc; i++)
 		snprintf(all_words, size, "%s%"MDB_PRIWORD" ", all_words, wordv[i]);
-		printf("%"MDB_PRIWORD"\t%c\t%s\n", wordv[i], wordv[i], all_words);
-	}
 	all_words[size-1] = '\0';
+
 	mdb_trans(handle, "write /%c 0x%x %s\n", t, addr, all_words);
 	free(all_words);
 }

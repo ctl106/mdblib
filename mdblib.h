@@ -39,6 +39,8 @@ char *mdb_trans(mdbhandle *handle, const char *format, ...);	// simple combo of 
 
 /*	utilities	*/
 void mdb_close_breakpoint(mdbbp *breakpoint);
+void mdb_noop(mdbhandle *handle);
+mdbstate mdb_state(mdbhandle *handle);
 
 /*	mdb commands - implemented using mdb_put(mdbhandle *handle) and mdb_get(mdbhandle *handle)	*/
 // breakpoints
@@ -48,12 +50,12 @@ int mdb_break_func(mdbhandle *handle, char *function, unsigned int passCount);
 void mdb_delete(mdbhandle *handle, int breakpoint);
 void mdb_delete_all(mdbhandle *handle);
 int mdb_watch(mdbhandle *handle, mdbptr address, char *breakonType, unsigned int passCount);
-int mdb_watch_val(mdbhandle *handle, mdbptr address, char *breakonType, unsigned char value, size_t passCount);
+int mdb_watch_val(mdbhandle *handle, mdbptr address, char *breakonType, mdbword value, size_t passCount);
 int mdb_watch_name(mdbhandle *handle, const char *name, char *breakonType, unsigned int passCount);
-int mdb_watch_name_val(mdbhandle *handle, const char *name, char *breakonType, unsigned char value, size_t passCount);
+int mdb_watch_name_val(mdbhandle *handle, const char *name, char *breakonType, mdbword value, size_t passCount);
 
 // data
-long mdb_print_var(mdbhandle *handle, char f, size_t value, char *variable);
+long mdb_print_var(mdbhandle *handle, char f, size_t value, const char *variable);
 mdbptr mdb_print_var_addr(mdbhandle *handle, const char *variable);
 const char *mdb_print_pin(mdbhandle *handle, char *pinName);
 void mdb_stim(mdbhandle *handle);
